@@ -4,14 +4,10 @@ variable "server_name" {
   type  = list(string)
   default = ["primary", "secondary"]
 }
-
+variable "ssh_fingerprint" {}
 
 provider "digitalocean" {
     token = "${var.do_token}"
-}
-
-data "digitalocean_ssh_key" "ssh_key" {
-    name = "Window_new"
 }
 
 data "digitalocean_droplet_snapshot" "heartbeat" {
@@ -26,11 +22,11 @@ resource "digitalocean_droplet" "rabbitmq" {
     name = "rabbitmq-${var.server_name[count.index]}"
     region = "lon1"
     size = "s-1vcpu-1gb"
-    ssh_keys = [data.digitalocean_ssh_key.ssh_key.id]
+    ssh_keys = ["${var.ssh_fingerprint}"]
 }
 
 resource "digitalocean_floating_ip" "rabbitmq" {
-  region = "${var.region}"
+  region = "${element(data.digitalocean_droplet_snapshot.heartbeat.regions.*, 1)}"
 }
 
 data "template_file" "init_ansible_inventory" {
@@ -38,6 +34,8 @@ data "template_file" "init_ansible_inventory" {
     vars = {
         primary = "${digitalocean_droplet.rabbitmq[0].ipv4_address}"
         secondary = "${digitalocean_droplet.rabbitmq[1].ipv4_address}"
+        primary_droplet_id = "${digitalocean_droplet.rabbitmq[0].id}"
+        secondary_droplet_id = "${digitalocean_droplet.rabbitmq[1].id}"
         floating_ip = "${digitalocean_floating_ip.rabbitmq.ip_address}"
     }
 }
@@ -62,4 +60,20 @@ output "rabbitmq2_ip_address" {
 
 output "floating_ip" {
     value = digitalocean_floating_ip.rabbitmq.ip_address
+}
+
+data "digitalocean_domain" "hackandpwned" {
+    name = "hackandpwned.fr"
+}
+
+resource "digitalocean_record" "rabbitmq" {
+    domain = data.digitalocean_domain.hackandpwned.name
+    type = "A"
+    name = "rabbit"
+    value = digitalocean_floating_ip.rabbitmq.ip_address
+    ttl = 3600
+}
+
+output "fqdn" {
+    value = digitalocean_record.rabbitmq.fqdn
 }
