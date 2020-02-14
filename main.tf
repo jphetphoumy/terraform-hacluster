@@ -5,6 +5,8 @@ variable "server_name" {
   default = ["primary", "secondary"]
 }
 variable "ssh_fingerprint" {}
+variable "private_key" {}
+variable "public_key" {}
 
 provider "digitalocean" {
     token = "${var.do_token}"
@@ -23,10 +25,36 @@ resource "digitalocean_droplet" "rabbitmq" {
     region = "lon1"
     size = "s-1vcpu-1gb"
     ssh_keys = ["${var.ssh_fingerprint}"]
+
+    provisioner "remote-exec" {
+        script = "${"deploy.sh"}"
+
+        connection {
+            type = "ssh"
+            user = "root"
+            private_key = "${file(var.private_key)}"
+            host = "${self.ipv4_address}"
+        }
+    }
 }
 
 resource "digitalocean_floating_ip" "rabbitmq" {
   region = "${element(data.digitalocean_droplet_snapshot.heartbeat.regions.*, 1)}"
+}
+
+resource "digitalocean_volume" "drbd" {
+  count                   = 2
+  region                  = "lon1"
+  name                    = "drbd${count.index}"
+  size                    = 20
+#   initial_filesystem_type = "ext4"
+  description             = "DRBD Volume"
+}
+
+resource "digitalocean_volume_attachment" "drbd" {
+  count = 2
+  droplet_id = digitalocean_droplet.rabbitmq[count.index].id
+  volume_id  = digitalocean_volume.drbd[count.index].id
 }
 
 data "template_file" "init_ansible_inventory" {
@@ -37,6 +65,8 @@ data "template_file" "init_ansible_inventory" {
         primary_droplet_id = "${digitalocean_droplet.rabbitmq[0].id}"
         secondary_droplet_id = "${digitalocean_droplet.rabbitmq[1].id}"
         floating_ip = "${digitalocean_floating_ip.rabbitmq.ip_address}"
+        primary_name = "${digitalocean_droplet.rabbitmq[0].name}"
+        secondary_name = "${digitalocean_droplet.rabbitmq[0].name}"
     }
 }
 
@@ -71,7 +101,6 @@ resource "digitalocean_record" "rabbitmq" {
     type = "A"
     name = "rabbit"
     value = digitalocean_floating_ip.rabbitmq.ip_address
-    ttl = 3600
 }
 
 output "fqdn" {
